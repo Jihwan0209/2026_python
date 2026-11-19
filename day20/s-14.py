@@ -53,35 +53,77 @@ print( test_word )
 print( tokenize_kiwi( test_word )  )
 # 마감이 안좋아요 실밥도 많고 바느질도 부족한 부분이 몇군데 있네요 교환받기 귀찮아서 그냥 씁니다
 # ['마감', '바느질', '부족', '부분', '교환', '귀찮다']
-
-### 전처리 : 학습 하지 전에 문장들을 단어로 분리 ###
+### 전처리 : 학습 하기 전에 문장들을 단어로 분리 ### 
+# 6. 특성 과 타깃 분리 
 from sklearn.model_selection import train_test_split
-X_train , X_test , Y_train , Y_test = train_test_split(
-    # X = 리뷰 , Y = 평점라벨링(0:부정 1:긍정)
+X_train,X_test,Y_train,Y_test=train_test_split( 
+    # X = 리뷰 , Y = 평점라벨링( 0:부정 1:긍정 )
     df_sample['cleaned_review'],df_sample['label'],
-    test_size=0.2, random_state=42, stratify=df_sample['label'] )
-# 7. 리뷰 --> 행렬(벡터) 변환
+    test_size=0.2, random_state=42, stratify=df_sample['label'] ) 
+# 7. 리뷰 --> 희소 행렬(벡터) 변환
 from sklearn.feature_extraction.text import TfidfVectorizer
-# TfidfVectorizer(tokenizer= 토큰나이즈함수)
-tfidf = TfidfVectorizer(
+# TfidfVectorizer( tokenizer= 토큰나이즈함수  )
+tfidf = TfidfVectorizer( 
     tokenizer= tokenize_kiwi, # 생략시 공백/띄어쓰기 기준으로 분리 # 직접만든함수
-    token_pattern=None, # 실행중 발생 하는 로그 비활성화
+    token_pattern=None , # 실행중 발생 하는 로그 비활성화  
 )
-X_train_tfidf = tfidf.fit_transform( X_train ) # 학습 -> 변환 # 학습용
-X_test_ffidf = tfidf.transform( X_test ) # 테스트용
-print( X_train_tfidf.shape ) # (4000, 4106) # (행개수 , 열개수) : 2차원
-print( X_test_ffidf.shape ) # (1000, 4106) # (문장, 총단어수) : 2차원
+X_train_tfidf = tfidf.fit_transform( X_train ) # 학습 -> 변환 # 학습용 
+X_test_tfidf = tfidf.transform( X_test ) # 테스트용 
+print( X_train_tfidf.shape ) # (4000, 4106)  # (행개수, 열개수) : 2차원
+print( X_test_tfidf.shape )  # (1000, 4106)  # (문장수, 총단어수  ) : 2차원
 # 안녕 사과 바나나 하세요
 # 안녕 딸기 하세요
-# (2 ,5)
+# (2, 5)
 # 안녕 사과 바나나 하세요 딸기
-#  1    1    1      1    0
-#  1    0    0      1    1
-print( '추출한 피처 10개만 확인: ' , tfidf.get_feature_names_out()[ :10 ] )
-# ['가게' '가게' '가격' '가격대' '가관' '가구' '가까이' '가끔' '가늘다' '가능']
+#  1     1   1      1     0
+#  1     0   0      1     1 
+print( '추출한 단어 10개만 확인: ', tfidf.get_feature_names_out()[ :10 ] )
+# ['가게' '가겨' '가격' '가격대' '가관' '가구' '가까이' '가끔' '가늘다' '가능']
 #(문제점) 오타 등 으로 유사한 단어들을 분별 불가능 해서 다른 단어로 취급
-#(해결) 유사도 거리 계산 (임베딩/BERT)
+#(해결) 유사도 거리 계산 ( 임베딩/BERT )
 
+# 8. 긍정/부정 : 감성분석 예측 모델 
+from sklearn.linear_model import LogisticRegression # 실무적으로 lightGBM
+model = LogisticRegression( C=1.0 , max_iter=1000, random_state=42 )
+model.fit( X_train_tfidf , Y_train ) # 분류 모델 학습 
+print( model.score( X_train_tfidf , Y_train ) ) # 0.89025
+print( model.score( X_test_tfidf , Y_test ) )   # 0.816
+Y_pred = model.predict( X_test_tfidf ) # 0.8087318087318087
+from sklearn.metrics import f1_score
+print( 'f1 : ' , f1_score( Y_test , Y_pred ) )
+print( X_train_tfidf.toarray()[0] ) # 수치 밀집행렬
 
+# 9. 예측하기.
+new_reviews = [
+    "배송도 정말 빠르고 가성비 최고입니다! 재구매 의사 있어요.",
+    "마감 상태가 엉망이고 실밥이 다 터져서 왔네요. 최악입니다.",
+    "그냥 가격만큼 하는 것 같아요. 특별히 좋지도 나쁘지도 않음."
+]
+# 정규표현식
+cleaned_new = [ ]
+for text in new_reviews : 
+    text = re.sub( r'[^가-힣a-zA-Z0-9\s]', ' ', str(text) )
+    cleaned_new.append( ' '.join(text.split() ) )
+# 정규표현식 이후 토큰나이즈
+new_tfidf = tfidf.transform( cleaned_new )
+# 토큰나이즈 이후 모델추론 
+probs = model.predict_proba( new_tfidf ) # predict 추론 # predict_proba 추론확률
+# 0.6 이상이면 긍정 , 0.4 이하이면 부정 그외 중립
+for i in range( len(new_reviews) ) : # 리뷰 수 만큼 반복
+    pos = probs[i][1] # i번째 추론 결과 확률( 0인덱스 부정확률 1인덱스 긍정확률 )
+    if pos >= 0.6 :
+        contents = '긍정'
+    elif pos <= 0.4 :
+        contents = '부정'
+    else :
+        contents = '중립'
+    print( f'리뷰: , {new_reviews[i]} ')
+    print( f'감성분석: , {contents} , 긍정확률:{ pos }, 부정확률:{ probs[i][0] }' )
+# 리뷰: , 배송도 정말 빠르고 가성비최고입니다! 재구매 의사 있어요. 
+# 감성분석: , 긍정 , 긍정확률:0.9204726250202763, 부정확률:0.07952737497972373
 
+# 리뷰: , 마감 상태가 엉망이고 실밥이 다 터져서 왔네요. 최악입니다. 
+# 감성분석: , 부정 , 긍정확률:0.03925452253173634, 부정확률:0.9607454774682637
 
+# 리뷰: , 그냥 가격만큼 하는 것 같아요. 특별히 좋지도 나쁘지도 않음. 
+# 감성분석: , 중립 , 긍정확률:0.43021681801327716, 부정확률:0.5697831819867228
